@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>分数フォント作成・編集機</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#fafaf7;--fg:#1c1c1a;--mut:#6b6b64;--card:#fff;--bd:#d9d8d0;--ac:#c2410c;--sel:#fff1e6}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171716;--fg:#ececE6;--mut:#9a9a92;--card:#222221;--bd:#3a3a37;--ac:#fb923c;--sel:#33261b}}
+:root[data-theme="dark"]{--bg:#171716;--fg:#ececE6;--mut:#9a9a92;--card:#222221;--bd:#3a3a37;--ac:#fb923c;--sel:#33261b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
+.wrap{display:grid;grid-template-columns:300px 1fr;gap:16px;padding:16px;max-width:1200px;margin:auto}
+@media(max-width:760px){.wrap{grid-template-columns:1fr}}
+h1{font-size:18px;margin:0 0 4px}.mut{color:var(--mut);font-size:12px}
+.panel{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+.panel h2{font-size:13px;margin:0 0 8px}
+label{display:block;font-size:12px;color:var(--mut);margin-top:8px}
+label b{float:right;color:var(--fg);font-weight:500}
+input[type=range]{width:100%}input[type=text]{width:100%;padding:6px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg)}
+button{padding:7px 10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);border-radius:6px;cursor:pointer;font:inherit;margin:2px 2px 0 0}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px}
+.cell{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:2px;text-align:center;cursor:pointer;font-size:10px;color:var(--mut)}
+.cell.sel{border-color:var(--ac);background:var(--sel)}.cell svg{width:100%;height:64px;color:var(--fg)}
+#big{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px;margin-bottom:12px}
+#big svg{width:100%;height:150px;color:var(--fg)}
+#msg{font-size:12px;color:var(--ac);min-height:18px}
+</style></head><body>
+<div class="wrap">
+<div>
+<h1>分数フォント作成・編集機</h1>
+<div class="mut">分母を指定 → 既約分数グリフを自動生成 → 調整 → フォント書き出し</div><br>
+<div class="panel"><h2>1. 分母</h2>
+<input type="text" id="dens" value="2,3,4,5,6,7,8,9,10,12,14,15,16,18,20,21,24,25,27,28,30,32,36">
+<div class="mut" id="count"></div>
+<h2 style="margin-top:10px">2. 数字の元フォント(任意)</h2>
+<input type="file" id="ff" accept=".ttf,.otf,.woff">
+<div class="mut" id="fname">未選択: 内蔵の簡易数字(7セグ風)を使用</div></div>
+<div class="panel"><h2>3. 全体パラメータ</h2><div id="ctl"></div></div>
+<div class="panel"><h2>4. 選択中グリフの微調整</h2><div id="sel" class="mut">グリッドから分数を選択</div><div id="nud"></div></div>
+<div class="panel"><h2>5. 書き出し</h2>
+<input type="text" id="fam" value="FractionSet">
+<button class="p" id="exf">フォント(frac/liga入り)</button><button id="exe">.fea</button><button id="exj">設定JSON</button>
+<label>置換のきっかけになるスラッシュ</label><div><label style="display:inline;margin-right:8px"><input type="checkbox" id="s1" checked> ⁄ (U+2044)</label><label style="display:inline;margin-right:8px"><input type="checkbox" id="s2" checked> / 半角</label><label style="display:inline"><input type="checkbox" id="s3" checked> ／ 全角</label></div>
+<label><input type="checkbox" id="lg" checked> liga でも置換(オフなら frac 機能のみ)</label>
+<label>テスト入力</label><input type="text" id="tin" value="1/12 + 5⁄36 = 11／36"><button id="tst">テスト表示</button>
+<div id="out" style="font-size:40px;line-height:1.3;min-height:56px;word-break:break-all"></div>
+<div id="msg"></div>
+<div class="mut">フォントは .ttf 名で出ますが中身はOpenType(CFF)です。1⁄12 のような入力が専用グリフに置換されます(frac/liga)。専用グリフ自体はPUA(U+E000〜)にもあります。</div></div>
+</div>
+<div><div id="big"></div><div id="grid"></div></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+<script>
+const NAMES=["zero","one","two","three","four","five","six","seven","eight","nine"];
+const DEF={scale:55,raise:380,drop:-30,track:10,gap:-10,slashW:220,slashT:50,slashH:760};
+const RNG={scale:[30,80,1,"数字サイズ %"],raise:[0,700,5,"分子の高さ"],drop:[-200,100,5,"分母の高さ"],track:[-40,80,2,"字間"],gap:[-120,120,2,"斜線との間隔"],slashW:[100,400,5,"斜線の幅"],slashT:[20,120,2,"斜線の太さ"],slashH:[500,900,10,"斜線の高さ"]};
+let P={...DEF},nudge={},sel=null,base=null,list=[];
+const $=id=>document.getElementById(id);
+const gcd=(a,b)=>b?gcd(b,a%b):a;
+// ---- digit paths (y-up, 1000 em) ----
+const SEG={0:"abcdef",1:"bc",2:"abged",3:"abgcd",4:"fgbc",5:"afgcd",6:"afgedc",7:"abc",8:"abcdefg",9:"abcdfg"};
+function seven(c){const t=80,w=440,h=700,m=h/2,r=[],R=(x,y,a,b)=>r.push([x,y,a,b]);
+ const S={a:[0,h-t,w,t],g:[0,m-t/2,w,t],d:[0,0,w,t],f:[0,m,t,h-m],b:[w-t,m,t,h-m],e:[0,0,t,m],c:[w-t,0,t,m]};
+ return{adv:540,cmds:SEG[c].split("").flatMap(k=>{const[x,y,a,b]=S[k];return[{type:"M",x,y},{type:"L",x:x+a,y},{type:"L",x:x+a,y:y+b},{type:"L",x,y:y+b},{type:"Z"}]})}}
+function digit(c){
+ if(base){const g=base.charToGlyph(c),u=base.unitsPerEm;return{adv:g.advanceWidth*1000/u,cmds:g.getPath(0,0,1000).commands.map(m=>{const o={...m};for(const k of["y","y1","y2"])if(k in o)o[k]=-o[k];return o})}}
+ return seven(c)}
+function put(path,cmds,sx,dx,dy){for(const m of cmds){const o={type:m.type};
+ if("x"in m){o.x=m.x*sx+dx;o.y=m.y*sx+dy}if("x1"in m){o.x1=m.x1*sx+dx;o.y1=m.y1*sx+dy}if("x2"in m){o.x2=m.x2*sx+dx;o.y2=m.y2*sx+dy}path.commands.push(o)}}
+function slashCmds(x0){const{slashW:w,slashT:t,slashH:h}=P;return[{type:"M",x:x0,y:-80},{type:"L",x:x0+t,y:-80},{type:"L",x:x0+w,y:h},{type:"L",x:x0+w-t,y:h},{type:"Z"}]}
+function run(s,x,y,sc){let cx=0;const out=[];for(const ch of s){const d=digit(ch);out.push([d.cmds,cx]);cx+=d.adv*sc+P.track}return{out,w:cx-P.track}}
+function build(n,d){const sc=P.scale/100,k=n+"/"+d,nd=nudge[k]||{};
+ const A=run(""+n,0,0,sc),B=run(""+d,0,0,sc),p=new opentype.Path(),sx=A.w+P.gap;
+ A.out.forEach(([c,x])=>put(p,c,sc,x+(nd.ndx||0),P.raise+(nd.ndy||0)));
+ p.commands.push(...slashCmds(sx));
+ const bx=sx+P.slashW+P.gap;B.out.forEach(([c,x])=>put(p,c,sc,bx+x+(nd.ddx||0),P.drop+(nd.ddy||0)));
+ return{path:p,adv:Math.max(sx+P.slashW,bx+B.w)+30}}
+function svgOf(g,big){return`<svg viewBox="-20 -860 ${g.adv+40} 1100"><g transform="scale(1,-1)"><path fill="currentColor" d="${g.path.toPathData(1)}"/>${big?'<line x1="0" x2="'+g.adv+'" y1="0" y2="0" stroke="#c2410c" stroke-width="3" opacity=".4"/>':""}</g></svg>`}
+function genList(){const set=new Set();
+ for(const s of $("dens").value.split(/[,\s、]+/)){const D=parseInt(s);if(!D||D<2||D>360)continue;
+  for(let q=2;q<=D;q++)if(D%q==0)for(let n=1;n<q;n++)if(gcd(n,q)==1)set.add(n+"/"+q)}
+ list=[...set].map(s=>s.split("/").map(Number)).sort((a,b)=>a[0]/a[1]-b[0]/b[1]||a[1]-b[1]);
+ $("count").textContent="専用グリフ: "+list.length+" 個"}
+function render(){const gr=$("grid");gr.innerHTML="";
+ list.forEach(([n,d])=>{const k=n+"/"+d,c=document.createElement("div");c.className="cell"+(k==sel?" sel":"");
+  c.innerHTML=svgOf(build(n,d))+k;c.onclick=()=>{sel=k;render();selUI()};gr.appendChild(c)});
+ if(sel){const[n,d]=sel.split("/").map(Number);$("big").innerHTML=svgOf(build(n,d),true)}else $("big").innerHTML='<div class="mut" style="padding:20px">分数を選ぶと拡大表示されます</div>'}
+function sliders(box,defs,getv,setv){box.innerHTML="";for(const k in defs){const[a,b,s,l]=defs[k],lab=document.createElement("label"),i=document.createElement("input");
+ i.type="range";i.min=a;i.max=b;i.step=s;i.value=getv(k);lab.innerHTML=l+"<b>"+i.value+"</b>";lab.appendChild(i);
+ i.oninput=()=>{lab.firstElementChild.textContent=i.value;setv(k,+i.value);render()};box.appendChild(lab)}}
+function ctlUI(){sliders($("ctl"),RNG,k=>P[k],(k,v)=>P[k]=v);const r=document.createElement("button");r.textContent="初期値に戻す";r.onclick=()=>{P={...DEF};ctlUI();render()};$("ctl").appendChild(r)}
+function selUI(){if(!sel){$("nud").innerHTML="";return}$("sel").textContent="編集中: "+sel;
+ const N={ndx:[-200,200,2,"分子 左右"],ndy:[-200,200,2,"分子 上下"],ddx:[-200,200,2,"分母 左右"],ddy:[-200,200,2,"分母 上下"]};
+ sliders($("nud"),N,k=>(nudge[sel]||{})[k]||0,(k,v)=>{(nudge[sel]=nudge[sel]||{})[k]=v});
+ const r=document.createElement("button");r.textContent="このグリフをリセット";r.onclick=()=>{delete nudge[sel];selUI();render()};$("nud").appendChild(r)}
+$("dens").oninput=()=>{genList();render()};
+$("ff").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{base=opentype.parse(await f.arrayBuffer());$("fname").textContent="使用中: "+f.name}catch(x){$("fname").textContent="読み込み失敗: "+x.message}render()};
+// ---- GSUB injection (frac + liga, ligature lookup) ----
+function addGSUB(buf,ligs,liga=true){
+ const w16=a=>[(a>>8)&255,a&255],w32=a=>[(a>>>24)&255,(a>>16)&255,(a>>8)&255,a&255];
+ const firsts=[...new Set(ligs.map(l=>l.comps[0]))].sort((a,b)=>a-b);
+ const sets=firsts.map(f=>ligs.filter(l=>l.comps[0]==f).sort((a,b)=>b.comps.length-a.comps.length));
+ const ligBytes=s=>{const hdr=2+2*s.length,tabs=s.map(l=>[...w16(l.out),...w16(l.comps.length),...l.comps.slice(1).flatMap(w16)]);
+  let o=hdr;const offs=tabs.map(t=>{const r=o;o+=t.length;return r});
+  return[...w16(s.length),...offs.flatMap(w16),...tabs.flat()]};
+ const covOff=6+2*firsts.length,cov=[...w16(1),...w16(firsts.length),...firsts.flatMap(w16)];
+ let o=covOff+cov.length;const sb=sets.map(ligBytes),so=sb.map(b=>{const r=o;o+=b.length;return r});
+ const sub=[...w16(1),...w16(covOff),...w16(firsts.length),...so.flatMap(w16),...cov,...sb.flat()];
+ const T=s=>[...s].map(c=>c.charCodeAt(0));
+ const script=[...w16(1),...T("DFLT"),...w16(8),...w16(4),...w16(0),...w16(0),...w16(0xFFFF),...w16(liga?2:1),...w16(0),...(liga?w16(1):[])];
+ const ft=[...w16(0),...w16(1),...w16(0)],feat=liga?[...w16(2),...T("frac"),...w16(14),...T("liga"),...w16(20),...ft,...ft]:[...w16(1),...T("frac"),...w16(8),...ft];
+ const look=[...w16(1),...w16(4),...w16(4),...w16(0),...w16(1),...w16(8),...sub];
+ const so2=10,fo=so2+script.length,lo=fo+feat.length;
+ let g=[...w32(0x00010000),...w16(so2),...w16(fo),...w16(lo),...script,...feat,...look];
+ while(g.length%4)g.push(0);
+ const dv=new DataView(buf),n=dv.getUint16(4),tabs=[];
+ for(let i=0;i<n;i++){const r=12+16*i,tag=String.fromCharCode(...new Uint8Array(buf,r,4)),off=dv.getUint32(r+8),len=dv.getUint32(r+12);
+  if(tag!=="GSUB")tabs.push({tag,data:new Uint8Array(buf.slice(off,off+len))})}
+ tabs.push({tag:"GSUB",data:Uint8Array.from(g)});tabs.sort((a,b)=>a.tag<b.tag?-1:1);
+ const sum=u=>{let s=0;for(let i=0;i<u.length;i+=4)s=(s+(((u[i]<<24)|(u[i+1]<<16)|(u[i+2]<<8)|u[i+3])>>>0))>>>0;return s};
+ const N=tabs.length,hdrLen=12+16*N;let pos=hdrLen;
+ tabs.forEach(t=>{t.pad=(4-t.data.length%4)%4;t.off=pos;pos+=t.data.length+t.pad});
+ const out=new Uint8Array(pos),ov=new DataView(out.buffer);
+ out.set(new Uint8Array(buf,0,4),0);ov.setUint16(4,N);
+ let sr=1,es=0;while(sr*2<=N){sr*=2;es++}ov.setUint16(6,sr*16);ov.setUint16(8,es);ov.setUint16(10,N*16-sr*16);
+ tabs.forEach((t,i)=>{const r=12+16*i;out.set(T(t.tag),r);out.set(t.data,t.off);
+  if(t.tag==="head")ov.setUint32(t.off+8,0);
+  ov.setUint32(r+4,sum(out.subarray(t.off,t.off+t.data.length+t.pad)));ov.setUint32(r+8,t.off);ov.setUint32(r+12,t.data.length)});
+ const head=tabs.find(t=>t.tag==="head");
+ if(head)ov.setUint32(head.off+8,(0xB1B0AFBA-sum(out))>>>0);
+ return out.buffer}
+
+// ---- export ----
+const pua=i=>0xE000+i,gname=(n,d)=>"frac_"+n+"_"+d;
+function makeFont(){const gl=[new opentype.Glyph({name:".notdef",advanceWidth:600,path:new opentype.Path()}),new opentype.Glyph({name:"space",unicode:32,advanceWidth:300,path:new opentype.Path()})];
+ for(let i=0;i<10;i++){const d=digit(""+i),p=new opentype.Path();put(p,d.cmds,1,0,0);gl.push(new opentype.Glyph({name:NAMES[i],unicode:48+i,advanceWidth:Math.round(d.adv+40),path:p}))}
+ const sp=new opentype.Path();sp.commands.push(...slashCmds(0));gl.push(new opentype.Glyph({name:"fraction",unicode:0x2044,advanceWidth:P.slashW+40,path:sp}));gl.push(new opentype.Glyph({name:"slash",unicode:47,advanceWidth:P.slashW+40,path:sp}));const fp=new opentype.Path();put(fp,slashCmds(0),1,(1000-P.slashW)/2,0);gl.push(new opentype.Glyph({name:"uniFF0F",unicode:0xFF0F,advanceWidth:1000,path:fp}));
+ list.forEach(([n,d],i)=>{const b=build(n,d);gl.push(new opentype.Glyph({name:gname(n,d),unicode:pua(i),advanceWidth:Math.round(b.adv),path:b.path}))});
+ return new opentype.Font({familyName:$("fam").value||"FractionSet",styleName:"Regular",unitsPerEm:1000,ascender:850,descender:-250,glyphs:gl})}
+function slashNames(){return[["s1","fraction"],["s2","slash"],["s3","uniFF0F"]].filter(([c])=>$(c).checked).map(x=>x[1])}
+function fea(){const L=[],q=x=>[...(""+x)].map(c=>NAMES[c]).join(" ");list.forEach(([n,d])=>slashNames().forEach(sn=>L.push(`    sub ${q(n)} ${sn} ${q(d)} by ${gname(n,d)};`)));
+ return"languagesystem DFLT dflt;\n"+($("lg").checked?["frac","liga"]:["frac"]).map(t=>`feature ${t} {\n${L.join("\n")}\n} ${t};`).join("\n")+"\n"}
+async function save(name,data){const m=$("msg");try{const dl=await claude.use("downloads");if(!dl){m.textContent="この環境では保存できません";return}await dl.save({filename:name,data});m.textContent="保存しました: "+name}catch(e){m.textContent=e&&e.code==="declined"?"キャンセルしました":"保存失敗: "+(e&&e.message||e)}}
+function fullFont(){const f=makeFont(),id={};for(let i=0;i<f.glyphs.length;i++)id[f.glyphs.get(i).name]=i;
+ const ligs=[];for(const k in id){const m=/^frac_(\d+)_(\d+)$/.exec(k);if(m)for(const sn of slashNames())ligs.push({comps:[...m[1]].map(c=>id[NAMES[c]]).concat(id[sn],[...m[2]].map(c=>id[NAMES[c]])),out:id[k]})}
+ return addGSUB(f.toArrayBuffer(),ligs,$("lg").checked)}
+$("exf").onclick=()=>{try{save(($("fam").value||"FractionSet")+".ttf",new Blob([fullFont()],{type:"font/ttf"}))}catch(e){$("msg").textContent="生成失敗: "+e.message}};
+$("tst").onclick=async()=>{try{const ff=new FontFace("FracTest",fullFont());await ff.load();document.fonts.add(ff);$("out").style.fontFamily="FracTest,serif";$("out").textContent=$("tin").value;$("msg").textContent=""}catch(e){$("msg").textContent="テスト失敗: "+e.message}};
+$("exe").onclick=()=>save("frac.txt",new Blob([fea()],{type:"text/plain"}));
+$("exj").onclick=()=>save("fraction-font-settings.json",new Blob([JSON.stringify({denominators:$("dens").value,params:P,nudge},null,1)],{type:"application/json"}));
+genList();ctlUI();render();
+</script></body></html>
